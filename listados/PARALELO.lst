@@ -1,0 +1,330 @@
+     1                                  ; Johan Barrera - 1152538 - Arquitectura de computadores - U9
+     2                                  ; Solo para DOSBox/modo real DOS, no ejecutable Windows.
+     3                                  bits 16
+     4                                  cpu 8086
+     5                                  org 100h
+     6 00000000 E90601                  jmp inicio
+     7                                  ; Sustituye LPT1.ASM: LPT1 es nombre reservado en Windows incluso con extension.
+     8                                  DATA_PORT equ 0378h
+     9                                  STATUS_PORT equ 0379h
+    10                                  CTRL_PORT equ 037Ah
+    11 00000003 00                      control_original db 0
+    12 00000004 00                      ultimo_estado db 0
+    13 00000005 4C5054313A20707275-     msg_ini db 'LPT1: prueba acotada sobre 0378h-037Ah.',13,10,'$'
+    13 0000000E 6562612061636F7461-
+    13 00000017 646120736F62726520-
+    13 00000020 30333738682D303337-
+    13 00000029 41682E0D0A24       
+    14 0000002F 45737461646F204646-     msg_ausente db 'Estado FFh: presencia no confirmada; no se envia dato.',13,10,'$'
+    14 00000038 683A2070726573656E-
+    14 00000041 636961206E6F20636F-
+    14 0000004A 6E6669726D6164613B-
+    14 00000053 206E6F20736520656E-
+    14 0000005C 766961206461746F2E-
+    14 00000065 0D0A24             
+    15 00000068 54696D656F75742065-     msg_busy db 'Timeout esperando listo; no se envio dato.',13,10,'$'
+    15 00000071 73706572616E646F20-
+    15 0000007A 6C6973746F3B206E6F-
+    15 00000083 20736520656E76696F-
+    15 0000008C 206461746F2E0D0A24 
+    16 00000095 4461746F2034316820-     msg_ack db 'Dato 41h enviado; ACK bajo observado. Control restaurado.',13,10,'$'
+    16 0000009E 656E766961646F3B20-
+    16 000000A7 41434B2062616A6F20-
+    16 000000B0 6F627365727661646F-
+    16 000000B9 2E20436F6E74726F6C-
+    16 000000C2 207265737461757261-
+    16 000000CB 646F2E0D0A24       
+    17 000000D1 4461746F2034316820-     msg_noack db 'Dato 41h enviado; timeout de ACK. Control restaurado.',13,10,'$'
+    17 000000DA 656E766961646F3B20-
+    17 000000E3 74696D656F75742064-
+    17 000000EC 652041434B2E20436F-
+    17 000000F5 6E74726F6C20726573-
+    17 000000FE 7461757261646F2E0D-
+    17 00000107 0A24               
+    18                                  inicio:
+    19 00000109 0E                          push cs
+    20 0000010A 1F                          pop ds
+    21 0000010B FC                          cld
+    22 0000010C E87A00                      call encabezado
+    23 0000010F BA[0500]                    mov dx, msg_ini
+    24 00000112 E87B00                      call texto_dos
+    25 00000115 BA7903                      mov dx, STATUS_PORT
+    26 00000118 B9FFFF                      mov cx, 0FFFFh
+    27                                  wait_ready:
+    28 0000011B EC                          in al, dx                ; puertos > FFh requieren DX
+    29 0000011C A2[0400]                    mov [ultimo_estado], al
+    30 0000011F 3CFF                        cmp al, 0FFh
+    31 00000121 7455                        je no_confirmado
+    32 00000123 A880                        test al, 80h             ; registro bit7=1: no ocupado (BUSY invertido)
+    33 00000125 750B                        jnz enviar
+    34 00000127 E2F2                        loop wait_ready
+    35 00000129 BA[6800]                    mov dx, msg_busy
+    36 0000012C E86100                      call texto_dos
+    37 0000012F E93C01                      jmp salir
+    38                                  enviar:
+    39 00000132 BA7A03                      mov dx, CTRL_PORT
+    40 00000135 EC                          in al, dx
+    41 00000136 A2[0300]                    mov [control_original], al
+    42                                      ; Poner strobe inactivo antes del dato: bit0=0 -> pin /STROBE alto.
+    43 00000139 24FE                        and al, 0FEh
+    44 0000013B EE                          out dx, al
+    45 0000013C BA7803                      mov dx, DATA_PORT
+    46 0000013F B041                        mov al, 41h
+    47 00000141 EE                          out dx, al
+    48 00000142 BA7A03                      mov dx, CTRL_PORT
+    49 00000145 A0[0300]                    mov al, [control_original]
+    50 00000148 0C01                        or al, 01h               ; bit0=1 -> pin /STROBE bajo, activo
+    51 0000014A EE                          out dx, al
+    52 0000014B B9FF00                      mov cx, 0FFh             ; retardo didactico, NO calibrado en microsegundos
+    53                                  retardo:
+    54 0000014E E2FE                        loop retardo
+    55 00000150 24FE                        and al, 0FEh
+    56 00000152 EE                          out dx, al
+    57 00000153 BA7903                      mov dx, STATUS_PORT
+    58 00000156 B9FFFF                      mov cx, 0FFFFh
+    59                                  wait_ack:
+    60 00000159 EC                          in al, dx
+    61 0000015A A840                        test al, 40h             ; pin /ACK bajo
+    62 0000015C 740E                        jz ack_observado
+    63 0000015E E2F9                        loop wait_ack
+    64 00000160 E81E00                      call restaurar_control
+    65 00000163 BA[D100]                    mov dx, msg_noack
+    66 00000166 E82700                      call texto_dos
+    67 00000169 E90201                      jmp salir
+    68                                  ack_observado:
+    69 0000016C E81200                      call restaurar_control
+    70 0000016F BA[9500]                    mov dx, msg_ack
+    71 00000172 E81B00                      call texto_dos
+    72 00000175 E9F600                      jmp salir
+    73                                  no_confirmado:
+    74 00000178 BA[2F00]                    mov dx, msg_ausente
+    75 0000017B E81200                      call texto_dos
+    76 0000017E E9ED00                      jmp salir
+    77                                  restaurar_control:
+    78 00000181 BA7A03                      mov dx, CTRL_PORT
+    79 00000184 A0[0300]                    mov al, [control_original]
+    80 00000187 EE                          out dx, al
+    81 00000188 C3                          ret
+    82                                  
+    83                                  %include "include/COMUN.INC"
+     1                              <1> ; Servicios compartidos: siempre preservar los registros de entrada.
+     2                              <1> ; Las cadenas didacticas terminan en NUL; no se envian a DOS AH=09h.
+     3                              <1> encabezado:
+     4 00000189 BA[7302]            <1>     mov dx, identidad
+     5 0000018C E80100              <1>     call texto_dos
+     6 0000018F C3                  <1>     ret
+     7                              <1> texto_dos:                    ; DS:DX -> cadena terminada en '$'
+     8 00000190 50                  <1>     push ax
+     9 00000191 B409                <1>     mov ah, 09h
+    10 00000193 CD21                <1>     int 21h
+    11 00000195 58                  <1>     pop ax
+    12 00000196 C3                  <1>     ret
+    13                              <1> texto_cero:                   ; DS:SI -> cadena terminada en 0
+    14 00000197 50                  <1>     push ax
+    15 00000198 52                  <1>     push dx
+    16 00000199 56                  <1>     push si
+    17 0000019A FC                  <1>     cld
+    18                              <1> .siguiente:
+    19 0000019B AC                  <1>     lodsb
+    20 0000019C 84C0                <1>     test al, al
+    21 0000019E 7408                <1>     jz .fin
+    22 000001A0 88C2                <1>     mov dl, al
+    23 000001A2 B402                <1>     mov ah, 02h
+    24 000001A4 CD21                <1>     int 21h
+    25 000001A6 EBF3                <1>     jmp .siguiente
+    26                              <1> .fin:
+    27 000001A8 5E                  <1>     pop si
+    28 000001A9 5A                  <1>     pop dx
+    29 000001AA 58                  <1>     pop ax
+    30 000001AB C3                  <1>     ret
+    31                              <1> nueva_linea:
+    32 000001AC 52                  <1>     push dx
+    33 000001AD BA[BD02]            <1>     mov dx, crlf
+    34 000001B0 E8DDFF              <1>     call texto_dos
+    35 000001B3 5A                  <1>     pop dx
+    36 000001B4 C3                  <1>     ret
+    37                              <1> caracter_dos:                 ; DL -> caracter, preserva AX
+    38 000001B5 50                  <1>     push ax
+    39 000001B6 B402                <1>     mov ah, 02h
+    40 000001B8 CD21                <1>     int 21h
+    41 000001BA 58                  <1>     pop ax
+    42 000001BB C3                  <1>     ret
+    43                              <1> imprimirAX:                   ; AX sin signo -> decimal, incluido cero
+    44 000001BC 50                  <1>     push ax
+    45 000001BD 53                  <1>     push bx
+    46 000001BE 51                  <1>     push cx
+    47 000001BF 52                  <1>     push dx
+    48 000001C0 BB0A00              <1>     mov bx, 10
+    49 000001C3 31C9                <1>     xor cx, cx
+    50                              <1> .dividir:
+    51 000001C5 31D2                <1>     xor dx, dx
+    52 000001C7 F7F3                <1>     div bx
+    53 000001C9 52                  <1>     push dx
+    54 000001CA 41                  <1>     inc cx
+    55 000001CB 85C0                <1>     test ax, ax
+    56 000001CD 75F6                <1>     jnz .dividir
+    57                              <1> .emitir:
+    58 000001CF 5A                  <1>     pop dx
+    59 000001D0 80C230              <1>     add dl, '0'
+    60 000001D3 E8DFFF              <1>     call caracter_dos
+    61 000001D6 E2F7                <1>     loop .emitir
+    62 000001D8 5A                  <1>     pop dx
+    63 000001D9 59                  <1>     pop cx
+    64 000001DA 5B                  <1>     pop bx
+    65 000001DB 58                  <1>     pop ax
+    66 000001DC C3                  <1>     ret
+    67                              <1> hex_word:                     ; AX -> cuatro digitos, conserva registros
+    68 000001DD 50                  <1>     push ax
+    69 000001DE 53                  <1>     push bx
+    70 000001DF 51                  <1>     push cx
+    71 000001E0 52                  <1>     push dx
+    72 000001E1 89C3                <1>     mov bx, ax
+    73 000001E3 B90400              <1>     mov cx, 4
+    74                              <1> .digito:
+    75 000001E6 D1C3                <1>     rol bx, 1
+    76 000001E8 D1C3                <1>     rol bx, 1
+    77 000001EA D1C3                <1>     rol bx, 1
+    78 000001EC D1C3                <1>     rol bx, 1
+    79 000001EE 88DA                <1>     mov dl, bl
+    80 000001F0 80E20F              <1>     and dl, 0Fh
+    81 000001F3 80FA09              <1>     cmp dl, 9
+    82 000001F6 7605                <1>     jbe .decimal
+    83 000001F8 80C237              <1>     add dl, 'A'-10
+    84 000001FB EB03                <1>     jmp .mostrar
+    85                              <1> .decimal:
+    86 000001FD 80C230              <1>     add dl, '0'
+    87                              <1> .mostrar:
+    88 00000200 E8B2FF              <1>     call caracter_dos
+    89 00000203 E2E1                <1>     loop .digito
+    90 00000205 5A                  <1>     pop dx
+    91 00000206 59                  <1>     pop cx
+    92 00000207 5B                  <1>     pop bx
+    93 00000208 58                  <1>     pop ax
+    94 00000209 C3                  <1>     ret
+    95                              <1> bcd_dos:                      ; AL BCD empaquetado valido -> dos digitos
+    96 0000020A 50                  <1>     push ax
+    97 0000020B 53                  <1>     push bx
+    98 0000020C 51                  <1>     push cx
+    99 0000020D 52                  <1>     push dx
+   100 0000020E 88C3                <1>     mov bl, al
+   101 00000210 B104                <1>     mov cl, 4
+   102 00000212 D2E8                <1>     shr al, cl
+   103 00000214 88C2                <1>     mov dl, al
+   104 00000216 80C230              <1>     add dl, '0'
+   105 00000219 E899FF              <1>     call caracter_dos
+   106 0000021C 88DA                <1>     mov dl, bl
+   107 0000021E 80E20F              <1>     and dl, 0Fh
+   108 00000221 80C230              <1>     add dl, '0'
+   109 00000224 E88EFF              <1>     call caracter_dos
+   110 00000227 5A                  <1>     pop dx
+   111 00000228 59                  <1>     pop cx
+   112 00000229 5B                  <1>     pop bx
+   113 0000022A 58                  <1>     pop ax
+   114 0000022B C3                  <1>     ret
+   115                              <1> mostrar_estado:               ; DS:SI -> instantanea AX,BX,CX,DX,SI,DI,FLAGS
+   116 0000022C 50                  <1>     push ax
+   117 0000022D 53                  <1>     push bx
+   118 0000022E 51                  <1>     push cx
+   119 0000022F 52                  <1>     push dx
+   120 00000230 56                  <1>     push si
+   121 00000231 57                  <1>     push di
+   122 00000232 BF[E002]            <1>     mov di, rotulos
+   123 00000235 B90700              <1>     mov cx, 7
+   124                              <1> .campo:
+   125 00000238 8A15                <1>     mov dl, [di]
+   126 0000023A E878FF              <1>     call caracter_dos
+   127 0000023D 8A5501              <1>     mov dl, [di+1]
+   128 00000240 E872FF              <1>     call caracter_dos
+   129 00000243 B23D                <1>     mov dl, '='
+   130 00000245 E86DFF              <1>     call caracter_dos
+   131 00000248 8B04                <1>     mov ax, [si]
+   132 0000024A E890FF              <1>     call hex_word
+   133 0000024D B220                <1>     mov dl, ' '
+   134 0000024F E863FF              <1>     call caracter_dos
+   135 00000252 83C602              <1>     add si, 2
+   136 00000255 83C702              <1>     add di, 2
+   137 00000258 E2DE                <1>     loop .campo
+   138 0000025A E84FFF              <1>     call nueva_linea
+   139 0000025D 5F                  <1>     pop di
+   140 0000025E 5E                  <1>     pop si
+   141 0000025F 5A                  <1>     pop dx
+   142 00000260 59                  <1>     pop cx
+   143 00000261 5B                  <1>     pop bx
+   144 00000262 58                  <1>     pop ax
+   145 00000263 C3                  <1>     ret
+   146                              <1> pausa_salir:
+   147 00000264 BA[C002]            <1>     mov dx, pausa
+   148 00000267 E826FF              <1>     call texto_dos
+   149 0000026A B407                <1>     mov ah, 07h
+   150 0000026C CD21                <1>     int 21h
+   151                              <1> salir:
+   152 0000026E B8004C              <1>     mov ax, 4C00h
+   153 00000271 CD21                <1>     int 21h
+   154 00000273 4A6F68616E20426172- <1> identidad db 'Johan Barrera | Cod: 1152538',13,10
+   154 0000027C 72657261207C20436F- <1>
+   154 00000285 643A20313135323533- <1>
+   154 0000028E 380D0A              <1>
+   155 00000291 417271756974656374- <1>           db 'Arquitectura de computadores | Unidad 9',13,10,13,10,'$'
+   155 0000029A 75726120646520636F- <1>
+   155 000002A3 6D70757461646F7265- <1>
+   155 000002AC 73207C20556E696461- <1>
+   155 000002B5 6420390D0A0D0A24    <1>
+   156 000002BD 0D0A24              <1> crlf db 13,10,'$'
+   157 000002C0 0D0A50756C73652075- <1> pausa db 13,10,'Pulse una tecla para salir.',13,10,'$'
+   157 000002C9 6E61207465636C6120- <1>
+   157 000002D2 706172612073616C69- <1>
+   157 000002DB 722E0D0A24          <1>
+   158 000002E0 415842584358445853- <1> rotulos db 'AXBXCXDXSIDIFL'
+   158 000002E9 494449464C          <1>
+   159                              <1> 
+   160                              <1> ; Guardar/enmascarar IRQ1: el BIOS no competira por la lectura de 60h.
+   161                              <1> mask_irq1:
+   162 000002EE 9C                  <1>     pushf
+   163 000002EF FA                  <1>     cli
+   164 000002F0 E421                <1>     in al, 21h
+   165 000002F2 A2[3703]            <1>     mov [imr_original], al
+   166 000002F5 0C02                <1>     or al, 02h
+   167 000002F7 E621                <1>     out 21h, al
+   168 000002F9 9D                  <1>     popf
+   169 000002FA C3                  <1>     ret
+   170                              <1> restore_imr:
+   171 000002FB 9C                  <1>     pushf
+   172 000002FC FA                  <1>     cli
+   173 000002FD A0[3703]            <1>     mov al, [imr_original]
+   174 00000300 E621                <1>     out 21h, al
+   175 00000302 9D                  <1>     popf
+   176 00000303 C3                  <1>     ret
+   177                              <1> ; Vaciar hasta 32 bytes residuales; nunca un bucle de vaciado infinito.
+   178                              <1> flush_raw:
+   179 00000304 B92000              <1>     mov cx, 32
+   180                              <1> .loop:
+   181 00000307 E464                <1>     in al, 64h
+   182 00000309 A801                <1>     test al, 1
+   183 0000030B 7404                <1>     jz .done
+   184 0000030D E460                <1>     in al, 60h
+   185 0000030F E2F6                <1>     loop .loop
+   186                              <1> .done:
+   187 00000311 C3                  <1>     ret
+   188                              <1> ; DX:AX = ticks BDA, lectura atomica; conserva estado IF previo.
+   189                              <1> read_ticks:
+   190 00000312 9C                  <1>     pushf
+   191 00000313 FA                  <1>     cli
+   192 00000314 06                  <1>     push es
+   193 00000315 B84000              <1>     mov ax, 40h
+   194 00000318 8EC0                <1>     mov es, ax
+   195 0000031A 26A16C00            <1>     mov ax, [es:6Ch]
+   196 0000031E 268B166E00          <1>     mov dx, [es:6Eh]
+   197 00000323 07                  <1>     pop es
+   198 00000324 9D                  <1>     popf
+   199 00000325 C3                  <1>     ret
+   200                              <1> ; Diferencia respecto a inicio_ticks; soporta un rollover diario del BIOS.
+   201                              <1> elapsed:
+   202 00000326 2B06[3803]          <1>     sub ax, [inicio_ticks]
+   203 0000032A 1B16[3A03]          <1>     sbb dx, [inicio_ticks+2]
+   204 0000032E 7306                <1>     jnc .done
+   205 00000330 05B000              <1>     add ax, 00B0h
+   206 00000333 83D218              <1>     adc dx, 0018h           ; dia BIOS = 001800B0h ticks
+   207                              <1> .done:
+   208 00000336 C3                  <1>     ret
+   209 00000337 00                  <1> imr_original db 0
+   210 00000338 00000000            <1> inicio_ticks dd 0
